@@ -1,5 +1,6 @@
 import numpy as np
 from math import radians
+from scipy.fftpack import fft, ifft, fftfreq
 
 class backProjection:
     def __init__(self, sino, dist, voxSize):
@@ -29,10 +30,50 @@ class backProjection:
                 span = np.arange(sensEd[iPix], sensEd[iPix + 1], linPix)
                 weight = h[iAng][iPix] / len(span)
                 for l in span:
-                    p1 = np.array([self.dist, l]).dot(self.rotM(-ang)).getA1()
+                    p1 = np.array([self.dist, l]).dot(self.rotM(-ang)).getA1() # select the points as opposite
                     p2 = np.array([self.dist, -l]).dot(self.rotM(-ang + radians(180))).getA1()
                     self.traceRay(p1, p2, weight)
         self.makeImage()
+
+    def filterSino(self):
+        h = self.sinogram[0]
+        yEdges = self.sinogram[1]
+        sensEd = self.sinogram[2]
+        fre = fftfreq(len(h[0]), sensEd[1] - sensEd[0])
+        pos = sensEd[:-1]
+        ang = yEdges[:-1]
+        y = []
+        x = []
+        w = []
+        for row, a in zip(h, ang):
+            rt = fft(row)
+            rtFilt = []
+            for r, f in zip(rt, fre):
+                rtFilt.append(r * abs(f)) # ramp filter
+                #rtFilt.append(r * min(1.0, abs(f))) # other filter
+            rit = ifft(rtFilt)
+            for r, p in zip(rit, pos):
+                y.append(a)
+                x.append(p)
+                w.append(np.real(r)) # real part, the imaginary one should be really small
+        self.sinogram = np.histogram2d(y, x, [len(ang), len(pos)], [[yEdges[0], yEdges[-1]], [sensEd[0], sensEd[-1]]], False, w)
+
+    def oneMinusSino(self):
+        h = self.sinogram[0]
+        yEdges = self.sinogram[1]
+        sensEd = self.sinogram[2]
+        fre = fftfreq(len(h[0]), sensEd[1] - sensEd[0])
+        pos = sensEd[:-1]
+        ang = yEdges[:-1]
+        y = []
+        x = []
+        w = []
+        for row, a in zip(h, ang):
+            for r, p in zip(row, pos):
+                y.append(a)
+                x.append(p)
+                w.append(1.0-r)
+        self.sinogram = np.histogram2d(y, x, [len(ang), len(pos)], [[yEdges[0], yEdges[-1]], [sensEd[0], sensEd[-1]]], False, w)
 
     def makeImage(self):
         x = []
@@ -43,7 +84,6 @@ class backProjection:
                 c.append(self.vMatrix[j][i])
                 x.append(-self.dist + i * self.vSize)
                 y.append(-self.dist + (self.nVox -1 -j) * self.vSize)
-
         self.image = np.histogram2d(y, x, [self.nVox, self.nVox], [[-self.dist, -self.dist + self.nVox * self.vSize], [-self.dist, -self.dist + self.nVox * self.vSize]], False, c)
 
     # ray tracing from: Siddon 1984 Fast calculation of the exact radiological path for a three dimensional ct array
